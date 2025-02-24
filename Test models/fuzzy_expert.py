@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler, LabelEncoder, MinMaxScaler
-from catboost import CatBoostRegressor
+from catboost import CatBoostRegressor, Pool
 import skfuzzy as fuzz
-
+import optuna
 
 class FuzzyExpert:
     def __init__(self, data_path):
@@ -12,7 +12,7 @@ class FuzzyExpert:
         self.df = pd.read_csv(data_path)
         self.label_encoders = {}
         self._prepare_data()
-        self._create_model()
+        self._optimize_hyperparameters_with_optuna()
 
     def _prepare_data(self):
         # Кодирование категориальных переменных
@@ -46,31 +46,56 @@ class FuzzyExpert:
             self.X_scaled, self.y_scaled, test_size=0.2, random_state=42
         )
 
-    def _optimize_hyperparameters(self):
+    def _objective(self, trial):
         # Определение пространства поиска гиперпараметров
-        param_grid = {
-            'iterations': [1000, 2000],
-            'learning_rate': [0.05, 0.1, 0.2],
-            'depth': [6, 8, 10],
-            'l2_leaf_reg': [1, 3, 5],
+        params = {
+            'iterations': trial.suggest_int('iterations', 500, 2000),
+            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+            'depth': trial.suggest_int('depth', 4, 10),
+            'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+            'random_strength': trial.suggest_float('random_strength', 0.1, 10),
+            'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+            'verbose': 0
         }
 
-        # Создание модели CatBoost
-        model = CatBoostRegressor(loss_function='MultiRMSE', verbose=0)
+        # Создание и обучение модели
+        model = CatBoostRegressor(**params, loss_function='MultiRMSE')
 
-        # Поиск лучших гиперпараметров с помощью GridSearchCV
-        grid_search = GridSearchCV(model, param_grid, cv=3, scoring='neg_mean_squared_error', n_jobs=-1)
-        grid_search.fit(self.X_train, self.y_train)
+        # Кросс-валидация
+        kf = KFold(n_splits=3, shuffle=True, random_state=42)
+        scores = []
 
-        print("Лучшие гиперпараметры:", grid_search.best_params_)
-        return grid_search.best_estimator_
+        for train_idx, val_idx in kf.split(self.X_train):
+            X_train_fold, X_val_fold = self.X_train[train_idx], self.X_train[val_idx]
+            y_train_fold, y_val_fold = self.y_train[train_idx], self.y_train[val_idx]
 
-    def _create_model(self):
-        # Создание и обучение модели CatBoost с оптимизацией гиперпараметров
-        self.model = self._optimize_hyperparameters()
+            train_data = Pool(data=X_train_fold, label=y_train_fold)
+            val_data = Pool(data=X_val_fold, label=y_val_fold)
 
-    def predict_values(self, age, gender, hs_gpa, sat, uni_rank, uni_gpa, field_of_study, internships, projects,
-                       certifications, soft_skills, networking, job_offers, current_job_level, entrepreneurship):
+            model.fit(train_data, eval_set=val_data, verbose=0)
+            predictions = model.predict(X_val_fold)
+
+            # Вычисление ошибки MultiRMSE
+            error = np.sqrt(np.mean((predictions - y_val_fold) ** 2))
+            scores.append(error)
+
+        # Средняя ошибка кросс-валидации
+        avg_error = np.mean(scores)
+        return avg_error
+
+    def _optimize_hyperparameters_with_optuna(self):
+        # Настройка Optuna для поиска гиперпараметров
+        study = optuna.create_study(direction='minimize')
+        study.optimize(self._objective, n_trials=20, show_progress_bar=True)
+
+        print("Лучшие гиперпараметры:", study.best_params)
+        print("Лучшее значение ошибки:", study.best_value)
+
+        # Создание модели с лучшими параметрами
+        self.model = CatBoostRegressor(**study.best_params, verbose=0)
+        self.model.fit(self.X_train, self.y_train, verbose=0)
+
+    def predict_values(self, age, gender, hs_gpa, sat, uni_rank, uni_gpa, field_of_study, internships, projects, certifications, soft_skills, networking, job_offers, current_job_level, entrepreneurship):
         # Кодирование категориальных переменных
         gender_encoded = self.label_encoders['Gender'].transform([gender])[0]
         field_of_study_encoded = self.label_encoders['Field_of_Study'].transform([field_of_study])[0]
@@ -163,7 +188,6 @@ class FuzzyExpert:
         print("All promotion predictions in range:", promotion_in_range)
         print("All satisfaction predictions in range:", satisfaction_in_range)
         print("All balance predictions in range:", balance_in_range)
-
 
 # Пример использования
 if __name__ == "__main__":
