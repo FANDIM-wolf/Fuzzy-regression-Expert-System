@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split, KFold
-from sklearn.preprocessing import StandardScaler, LabelEncoder, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 from catboost import CatBoostRegressor, Pool
 import skfuzzy as fuzz
 import optuna
@@ -92,8 +92,8 @@ class FuzzyExpert:
         print("Лучшее значение ошибки:", study.best_value)
 
         # Создание модели с лучшими параметрами
-        self.model = CatBoostRegressor(**study.best_params, verbose=0)
-        self.model.fit(self.X_train, self.y_train, verbose=0)
+        self.model = CatBoostRegressor(**study.best_params, loss_function='MultiRMSE', verbose=0)
+        self.model.fit(self.X_train, self.y_train)
 
     def predict_values(self, age, gender, hs_gpa, sat, uni_rank, uni_gpa, field_of_study, internships, projects, certifications, soft_skills, networking, job_offers, current_job_level, entrepreneurship):
         # Кодирование категориальных переменных
@@ -129,44 +129,68 @@ class FuzzyExpert:
         satisfaction_range = np.arange(1, 11, 1)
         balance_range = np.arange(1, 11, 1)
 
-        salary_hi = fuzz.trimf(salary_range, [60000, 75000, 90000])
-        promotion_lo = fuzz.trimf(promotion_range, [1, 2, 3])
-        satisfaction_hi = fuzz.trimf(satisfaction_range, [7, 8, 9])
-        balance_hi = fuzz.trimf(balance_range, [7, 8, 9])
+        # Определение функций принадлежности для low, medium и high
+        salary_low = fuzz.trimf(salary_range, [25000, 40000, 55000])
+        salary_medium = fuzz.trimf(salary_range, [40000, 60000, 80000])
+        salary_high = fuzz.trimf(salary_range, [60000, 75000, 90000])
+
+        promotion_low = fuzz.trimf(promotion_range, [1, 2, 3])
+        promotion_medium = fuzz.trimf(promotion_range, [2, 3, 4])
+        promotion_high = fuzz.trimf(promotion_range, [3, 4, 5])
+
+        satisfaction_low = fuzz.trimf(satisfaction_range, [1, 3, 5])
+        satisfaction_medium = fuzz.trimf(satisfaction_range, [3, 5, 7])
+        satisfaction_high = fuzz.trimf(satisfaction_range, [5, 7, 9])
+
+        balance_low = fuzz.trimf(balance_range, [1, 3, 5])
+        balance_medium = fuzz.trimf(balance_range, [3, 5, 7])
+        balance_high = fuzz.trimf(balance_range, [5, 7, 9])
 
         # Определение степени принадлежности
-        salary_level = fuzz.interp_membership(salary_range, salary_hi, salary)
-        promotion_level = fuzz.interp_membership(promotion_range, promotion_lo, promotion)
-        satisfaction_level = fuzz.interp_membership(satisfaction_range, satisfaction_hi, satisfaction)
-        balance_level = fuzz.interp_membership(balance_range, balance_hi, balance)
+        salary_level_low = fuzz.interp_membership(salary_range, salary_low, salary)
+        salary_level_medium = fuzz.interp_membership(salary_range, salary_medium, salary)
+        salary_level_high = fuzz.interp_membership(salary_range, salary_high, salary)
+
+        promotion_level_low = fuzz.interp_membership(promotion_range, promotion_low, promotion)
+        promotion_level_medium = fuzz.interp_membership(promotion_range, promotion_medium, promotion)
+        promotion_level_high = fuzz.interp_membership(promotion_range, promotion_high, promotion)
+
+        satisfaction_level_low = fuzz.interp_membership(satisfaction_range, satisfaction_low, satisfaction)
+        satisfaction_level_medium = fuzz.interp_membership(satisfaction_range, satisfaction_medium, satisfaction)
+        satisfaction_level_high = fuzz.interp_membership(satisfaction_range, satisfaction_high, satisfaction)
+
+        balance_level_low = fuzz.interp_membership(balance_range, balance_low, balance)
+        balance_level_medium = fuzz.interp_membership(balance_range, balance_medium, balance)
+        balance_level_high = fuzz.interp_membership(balance_range, balance_high, balance)
 
         # Правила
-        rule1 = np.fmin(salary_level, np.fmin(promotion_level, np.fmin(satisfaction_level, balance_level)))
-        rule2 = np.fmin(salary_level, np.fmin(promotion_level, np.fmin(satisfaction_level, 1 - balance_level)))
-        rule3 = np.fmin(1 - salary_level, np.fmin(1 - promotion_level, np.fmin(satisfaction_level, balance_level)))
-        rule4 = np.fmin(1 - salary_level, np.fmin(1 - promotion_level, np.fmin(1 - satisfaction_level, 1 - balance_level)))
-        rule5 = np.fmin(salary_level, np.fmin(1 - promotion_level, np.fmin(satisfaction_level, balance_level)))
-        rule6 = np.fmin(1 - salary_level, np.fmin(promotion_level, np.fmin(1 - satisfaction_level, balance_level)))
-        rule7 = np.fmin(salary_level, np.fmin(promotion_level, np.fmin(1 - satisfaction_level, 1 - balance_level)))
-        rule8 = np.fmin(1 - salary_level, np.fmin(1 - promotion_level, np.fmin(satisfaction_level, 1 - balance_level)))
+        rule1 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_high, balance_level_high)))
+        rule2 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_high, balance_level_medium)))
+        rule3 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_medium, balance_level_medium)))
+        rule4 = np.fmin(salary_level_high, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_medium)))
+        rule5 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_medium, balance_level_medium)))
+        rule6 = np.fmin(salary_level_medium, np.fmin(promotion_level_high, np.fmin(satisfaction_level_medium, balance_level_medium)))
+        rule7 = np.fmin(salary_level_low, np.fmin(promotion_level_low, np.fmin(satisfaction_level_low, balance_level_low)))
+        rule8 = np.fmin(salary_level_medium, np.fmin(promotion_level_low, np.fmin(satisfaction_level_low, balance_level_low)))
+        rule9 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_low, balance_level_low)))
+        rule10 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_low, balance_level_low)))
+        rule11 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_low)))
+        rule12 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_medium)))
+        rule13 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_medium)))
 
         # Классификация
         if np.max(rule1) > 0.5:
             return "(Q1 и Q2) - высокий успех в карьере и высокий баланс между работой и личной жизнью"
-        elif np.max(rule2) > 0.5:
-            return "(Q1 и !Q2) - высокий успех в карьере, но низкий баланс между работой и личной жизнью"
-        elif np.max(rule3) > 0.5:
-            return "(!Q1 и Q2) - низкий успех в карьере, но высокий баланс между работой и личной жизнью"
-        elif np.max(rule4) > 0.5:
-            return "(!Q1 и !Q2) - низкий успех в карьере и низкий баланс между работой и личной жизнью"
-        elif np.max(rule5) > 0.5:
-            return "(Q1 и Q2) - средний успех в карьере и средний баланс между работой и личной жизнью"
+        elif np.max(rule2) > 0.5 or np.max(rule3) > 0.5 or np.max(rule4) > 0.5 or np.max(rule5) > 0.5:
+            return "(Q1 и Q2) - высокий успех в карьере и средний баланс между работой и личной жизнью"
         elif np.max(rule6) > 0.5:
-            return "(Q1 и !Q2) - средний успех в карьере, но низкий баланс между работой и личной жизнью"
-        elif np.max(rule7) > 0.5:
-            return "(!Q1 и Q2) - низкий успех в карьере, но средний баланс между работой и личной жизнью"
-        elif np.max(rule8) > 0.5:
+            return "(!Q1 и Q2) - низкий успех в карьере, но высокий баланс между работой и личной жизнью"
+        elif np.max(rule7) > 0.5 or np.max(rule8) > 0.5 or np.max(rule9) > 0.5 or np.max(rule10) > 0.5:
             return "(!Q1 и !Q2) - низкий успех в карьере и низкий баланс между работой и личной жизнью"
+        elif np.max(rule11) > 0.5 or np.max(rule12) > 0.5 or np.max(rule13) > 0.5:
+            return "(Q1 и !Q2) - высокий успех в карьере, но низкий баланс между работой и личной жизнью"
+        else:
+            return "Неопределенный результат"
 
     def test_model(self):
         # Тестирование модели на тестовых данных
@@ -184,29 +208,7 @@ class FuzzyExpert:
         satisfaction_in_range = np.all((satisfaction_preds >= 1) & (satisfaction_preds <= 10))
         balance_in_range = np.all((balance_preds >= 1) & (balance_preds <= 10))
 
-        print("All salary predictions in range:", salary_in_range)
-        print("All promotion predictions in range:", promotion_in_range)
-        print("All satisfaction predictions in range:", satisfaction_in_range)
-        print("All balance predictions in range:", balance_in_range)
-
-# Пример использования
-if __name__ == "__main__":
-    fuzzy_expert = FuzzyExpert('education_career_success.csv')
-
-    # Пример использования
-    example_predictions = fuzzy_expert.predict_values(
-        27, 'Male', 3.6, 1300, 75, 3.5, 'Medicine', 2, 3, 1, 7, 6, 2, 'Mid', 'No'
-    )
-    salary, promotion, satisfaction, balance = example_predictions
-
-    print(f"Predicted Starting Salary: {salary:.2f}")
-    print(f"Predicted Years to Promotion: {promotion:.2f}")
-    print(f"Predicted Career Satisfaction: {satisfaction:.2f}")
-    print(f"Predicted Work-Life Balance: {balance:.2f}")
-
-    # Классификация предсказания
-    classification = fuzzy_expert.fuzzy_classification(salary, promotion, satisfaction, balance)
-    print(classification)
-
-    # Тестирование модели
-    fuzzy_expert.test_model()
+        if not salary_in_range or not promotion_in_range or not satisfaction_in_range or not balance_in_range:
+            print("Предсказания выходят за допустимые границы!")
+        else:
+            print("Тестирование завершено успешно.")
