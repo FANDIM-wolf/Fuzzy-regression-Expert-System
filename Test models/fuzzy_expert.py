@@ -18,7 +18,10 @@ class FuzzyExpert:
         # Кодирование категориальных переменных
         for column in ['Gender', 'Field_of_Study', 'Current_Job_Level', 'Entrepreneurship']:
             self.label_encoders[column] = LabelEncoder()
-            self.df[column] = self.label_encoders[column].fit_transform(self.df[column])
+            # Проверка на наличие новых категорий
+            unique_values = self.df[column].unique()
+            self.label_encoders[column].fit(unique_values)
+            self.df[column] = self.label_encoders[column].transform(self.df[column])
 
         # Разделение на признаки и целевые переменные
         self.X = self.df.drop(columns=['Student_ID', 'Starting_Salary', 'Years_to_Promotion', 'Career_Satisfaction', 'Work_Life_Balance'])
@@ -86,7 +89,7 @@ class FuzzyExpert:
     def _optimize_hyperparameters_with_optuna(self):
         # Настройка Optuna для поиска гиперпараметров
         study = optuna.create_study(direction='minimize')
-        study.optimize(self._objective, n_trials=20, show_progress_bar=True)
+        study.optimize(self._objective, n_trials=1, show_progress_bar=True)
 
         print("Лучшие гиперпараметры:", study.best_params)
         print("Лучшее значение ошибки:", study.best_value)
@@ -123,13 +126,13 @@ class FuzzyExpert:
         return salary_pred, promotion_pred, satisfaction_pred, balance_pred
 
     def fuzzy_classification(self, salary, promotion, satisfaction, balance):
-        # Функции принадлежности
+       # Функции принадлежности
         salary_range = np.arange(25000, 151000, 1000)
         promotion_range = np.arange(1, 6, 1)
         satisfaction_range = np.arange(1, 11, 1)
         balance_range = np.arange(1, 11, 1)
 
-        # Определение функций принадлежности для low, medium и high
+        # Определение функций принадлежности для низких, средних и высоких значений
         salary_low = fuzz.trimf(salary_range, [25000, 40000, 55000])
         salary_medium = fuzz.trimf(salary_range, [40000, 60000, 80000])
         salary_high = fuzz.trimf(salary_range, [60000, 75000, 90000])
@@ -163,7 +166,7 @@ class FuzzyExpert:
         balance_level_medium = fuzz.interp_membership(balance_range, balance_medium, balance)
         balance_level_high = fuzz.interp_membership(balance_range, balance_high, balance)
 
-        # Правила
+        # Правила классификации
         rule1 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_high, balance_level_high)))
         rule2 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_high, balance_level_medium)))
         rule3 = np.fmin(salary_level_high, np.fmin(promotion_level_high, np.fmin(satisfaction_level_medium, balance_level_medium)))
@@ -173,22 +176,27 @@ class FuzzyExpert:
         rule7 = np.fmin(salary_level_low, np.fmin(promotion_level_low, np.fmin(satisfaction_level_low, balance_level_low)))
         rule8 = np.fmin(salary_level_medium, np.fmin(promotion_level_low, np.fmin(satisfaction_level_low, balance_level_low)))
         rule9 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_low, balance_level_low)))
-        rule10 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_low, balance_level_low)))
-        rule11 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_low)))
+        rule10 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_low)))
+        rule11 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_medium)))
         rule12 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_medium)))
-        rule13 = np.fmin(salary_level_medium, np.fmin(promotion_level_medium, np.fmin(satisfaction_level_medium, balance_level_medium)))
 
         # Классификация
         if np.max(rule1) > 0.5:
             return "(Q1 и Q2) - высокий успех в карьере и высокий баланс между работой и личной жизнью"
-        elif np.max(rule2) > 0.5 or np.max(rule3) > 0.5 or np.max(rule4) > 0.5 or np.max(rule5) > 0.5:
+        elif np.max(rule2) > 0.5 or np.max(rule3) > 0.5 or np.max(rule4) > 0.5:
             return "(Q1 и Q2) - высокий успех в карьере и средний баланс между работой и личной жизнью"
+        elif np.max(rule5) > 0.5:
+            return "(Q1 и !Q2) - высокий успех в карьере, но низкий баланс между работой и личной жизнью"
         elif np.max(rule6) > 0.5:
             return "(!Q1 и Q2) - низкий успех в карьере, но высокий баланс между работой и личной жизнью"
-        elif np.max(rule7) > 0.5 or np.max(rule8) > 0.5 or np.max(rule9) > 0.5 or np.max(rule10) > 0.5:
+        elif np.max(rule7) > 0.5:
             return "(!Q1 и !Q2) - низкий успех в карьере и низкий баланс между работой и личной жизнью"
-        elif np.max(rule11) > 0.5 or np.max(rule12) > 0.5 or np.max(rule13) > 0.5:
+        elif np.max(rule8) > 0.5 or np.max(rule9) > 0.5:
+            return "(!Q1 и !Q2) - низкий успех в карьере и низкий баланс между работой и личной жизнью"
+        elif np.max(rule10) > 0.5:
             return "(Q1 и !Q2) - высокий успех в карьере, но низкий баланс между работой и личной жизнью"
+        elif np.max(rule11) > 0.5 or np.max(rule12) > 0.5:
+            return "(!Q1 и !Q2) - низкий успех в карьере и низкий баланс между работой и личной жизнью"
         else:
             return "Неопределенный результат"
 
@@ -212,3 +220,21 @@ class FuzzyExpert:
             print("Предсказания выходят за допустимые границы!")
         else:
             print("Тестирование завершено успешно.")
+
+# Пример использования
+fuzzy_expert = FuzzyExpert('education_career_success.csv')
+
+# Пример предсказания
+salary, promotion, satisfaction, balance = fuzzy_expert.predict_values(
+    age=25, gender="Male", hs_gpa=3.8, sat=1200, uni_rank=2, uni_gpa=3.5,
+    field_of_study="Engineering", internships=2, projects=3, certifications=1,
+    soft_skills=4, networking=5, job_offers=3, current_job_level="Entry",
+    entrepreneurship="No"
+)
+
+print(f"Предсказанные значения: {salary}, {promotion}, {satisfaction}, {balance}")
+
+# Нечеткая классификация
+result = fuzzy_expert.fuzzy_classification(salary, promotion, satisfaction, balance)
+print(result)
+
