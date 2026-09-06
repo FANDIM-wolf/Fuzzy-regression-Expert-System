@@ -1,11 +1,8 @@
-# Fuzzy-Regression Expert System for Career Forecasting
+# Fuzzy-Regression Expert System for Career Expectation Forecasting
 
-A hybrid expert system that combines gradient-boosted regression with Mamdani fuzzy
-inference to forecast career outcomes from educational and extracurricular profiles.
-The system predicts four targets — starting salary, years to promotion, career
-satisfaction and work–life balance — and expresses each of them both as a number and
-as a linguistic term (`low` / `medium` / `high`), so that results can be filtered
-against a user's stated preferences.
+An expert system that helps align student career expectations with real labour-market
+conditions, built as a hybrid of gradient-boosted regression and Mamdani fuzzy
+inference.
 
 Reference implementation for the paper *A Practical Solution for Forecasting Career
 Expectations: From Education to Professional Realization*
@@ -13,26 +10,61 @@ Expectations: From Education to Professional Realization*
 
 ---
 
-## Why a hybrid model
+## Problem
 
-A pure regressor returns a point estimate that is hard to act on: the difference
-between a predicted salary of 71,400 and 73,900 carries no practical meaning for a
-student choosing a track. A pure rule base, on the other hand, cannot exploit the
-statistical structure of a large profile dataset.
+Students and graduates routinely enter the labour market with expectations that do not
+match what employers actually require. The gap is a barrier to effective cooperation
+between universities and industry, and it is particularly visible in the Russian
+Federation, where higher education institutions often have limited contact with
+business and industry. The consequences are lower graduate competitiveness and a drag
+on economic growth.
 
-This system runs both and merges them:
+Closing the gap needs a shared, transportable representation of what a given academic
+and personal profile can realistically expect — one that a student, a faculty advisor
+and an employer can all read the same way. This project implements one such
+representation.
 
-1. **Regression stage.** A CatBoost model with a `MultiRMSE` objective predicts all
-   four targets jointly from 15 profile features.
-2. **Fuzzification.** Each prediction is mapped onto a three-term partition
-   (`low` / `medium` / `high`) whose memberships sum to 1 at every point.
-3. **Inference stage.** A complete 27-rule Mamdani base derives a salary term from
-   promotion speed, satisfaction and balance; the result is defuzzified by the
-   height method.
-4. **Aggregation.** The regression estimate and the fuzzy estimate are combined with
-   a configurable weight (`--hybrid-weight`, default 0.5).
-5. **Preference filtering.** Candidates are selected by their linguistic categories
-   rather than by raw thresholds.
+## Approach
+
+The system takes a student's academic, professional and personal characteristics and
+produces an expectation profile across four dimensions: **starting salary**, **years
+to promotion**, **career satisfaction** and **work–life balance**.
+
+Each dimension is reported twice — as a number and as a linguistic term
+(`low` / `medium` / `high`). The linguistic form is the operative one. It is what
+makes an expectation comparable to an employer's stated conditions, and what lets a
+student express a preference (*"satisfaction at least medium, balance high"*) and see
+which profiles satisfy it. Point estimates alone do not support that kind of
+reasoning: the difference between a predicted salary of 71,400 and 73,900 carries no
+guidance value.
+
+The pipeline runs in five stages:
+
+1. **Regression.** A CatBoost model with a `MultiRMSE` objective predicts all four
+   dimensions jointly from 15 profile features.
+2. **Fuzzification.** Each prediction is mapped onto a three-term partition whose
+   memberships sum to 1 at every point in the range.
+3. **Inference.** A complete 27-rule Mamdani base derives a salary expectation from
+   promotion speed, satisfaction and balance, capturing domain knowledge that a purely
+   statistical model cannot recover from tabular features alone.
+4. **Aggregation.** The statistical and the rule-based estimates are combined under a
+   configurable weight (`--hybrid-weight`, default 0.5), so an institution can decide
+   how far to lean on data versus on expert rules.
+5. **Preference filtering.** Cohorts are filtered by linguistic category, which is
+   what turns a forecast into actionable guidance.
+
+## Intended use
+
+- **For students** — a realistic picture of the outcomes associated with their current
+  profile, and an explicit view of which characteristics move that picture.
+- **For faculty advisors** — a basis for directing students toward professional
+  development that fits both their profile and market conditions.
+- **For universities and employers** — a common vocabulary for the expectation gap,
+  expressed in terms both sides can act on rather than in raw model output.
+
+The rule base is plain data (`career_es/fuzzy.py`) and is meant to be revised: an
+institution with its own expert knowledge about its region and its industries can
+replace it without touching the rest of the pipeline.
 
 ---
 
@@ -57,14 +89,6 @@ python -m career_es train \
   --model career_model.joblib
 ```
 
-```
-Target                          R^2         MAE   MAE (mean)
-Starting_Salary             -0.0274   11982.513    11832.355
-Years_to_Promotion          -0.0060       1.255        1.240
-Career_Satisfaction         -0.0190       2.585        2.571
-Work_Life_Balance           -0.0165       2.517        2.512
-```
-
 Every metric is reported next to a mean-predicting baseline, so a model that fails to
 beat the constant predictor is visible immediately rather than hidden behind an
 absolute error figure.
@@ -75,7 +99,7 @@ absolute error figure.
 python -m career_es train --data education_career_success.csv --optimize --trials 20
 ```
 
-**Forecast a single profile:**
+**Build an expectation profile for one student:**
 
 ```bash
 python -m career_es predict --model career_model.joblib --features '{
@@ -104,7 +128,7 @@ python -m career_es predict --model career_model.joblib --features '{
 }
 ```
 
-**Score a cohort and filter it by preferences:**
+**Screen a cohort against stated preferences:**
 
 ```bash
 python -m career_es recommend \
@@ -140,7 +164,9 @@ result = system.predict_one(
 print(result["categories"])
 ```
 
-The fuzzy layer is independent of the regressor and can be reused on its own:
+The fuzzy layer is independent of the regressor and can be reused on its own — for
+instance, to reason over expectations elicited directly from a student rather than
+predicted:
 
 ```python
 from career_es.fuzzy import fuzzify, fuzzy_salary
@@ -171,6 +197,10 @@ Both shipped datasets are read through the same code path: Russian column header
 automatically, and columns derived from target variables (`*_cluster`, `Cluster`) are
 dropped on load to prevent target leakage.
 
+Admission scores are carried on a 40–100 EGE scale; the loader converts SAT values
+linearly from 400–1600, so data from either system can be used without changing the
+schema.
+
 ## Input schema
 
 | Feature | Type | Notes |
@@ -191,16 +221,16 @@ dropped on load to prevent target leakage.
 | `Current_Job_Level` | categorical | |
 | `Entrepreneurship` | categorical | |
 
-Targets and their admissible ranges: `Starting_Salary` (25,000–150,000),
+Output dimensions and their admissible ranges: `Starting_Salary` (25,000–150,000),
 `Years_to_Promotion` (1–5), `Career_Satisfaction` (1–10), `Work_Life_Balance` (1–10).
-Predictions are clipped to these ranges.
+Values are clipped to these ranges.
 
 ## Design notes
 
 **Target scaling.** Targets are standardised before training. Under a joint
 `MultiRMSE` objective, feeding salary (order 10⁵) and years-to-promotion (order 10⁰)
 in their native units lets the salary term dominate the loss and leaves the other
-three effectively untrained.
+three dimensions effectively untrained.
 
 **Categorical handling.** Nominal features are passed to CatBoost as `cat_features`
 rather than label-encoded into integers, which would impose an arbitrary ordering on
@@ -218,21 +248,21 @@ defuzzified output to the lower bound instead of raising an error.
 Multiplying a term centre by its firing strength conflates the confidence of an
 inference with the value of the output variable.
 
-## Dataset notes
+## Datasets
 
-The bundled `education_career_success.csv` (5,000 records) is a **synthetic
-benchmark** used here to exercise and validate the pipeline end to end. Feature–target
-correlations in it are near zero (|r| < 0.04 throughout), so R² stays around zero for
-any estimator; the numbers in the Quick start section reflect that and should be read
-as a pipeline smoke test, not as a claim about predictive accuracy.
+The bundled `education_career_success.csv` (5,000 records) is a **synthetic benchmark**
+used to exercise and validate the pipeline end to end. Its feature–target correlations
+are near zero throughout, so reported R² stays around zero regardless of the
+estimator — the metrics printed by `train` on this file are a smoke test of the
+pipeline, not a measure of forecasting accuracy.
 
-Note also that `test.csv` contains the same 5,000 records as the training file with
-the target columns removed. It is a format fixture for the `recommend` command, not a
-held-out evaluation set — use the `train`/`evaluate` split for measurement.
+`test.csv` holds the same 5,000 records with the target columns removed. It is a
+format fixture for the `recommend` command, not a held-out evaluation set; use the
+split produced by `train` or `evaluate` for measurement.
 
-Applying the system to real cohort data (university employment-monitoring records,
-labour-office registries, longitudinal household surveys) requires only that the
-input conform to the schema above.
+Deployment against real cohort data — university employment-monitoring records,
+regional labour-office registries, employer surveys — requires only that the input
+conform to the schema above.
 
 ## Citation
 
